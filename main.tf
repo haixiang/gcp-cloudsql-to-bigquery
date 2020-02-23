@@ -3,6 +3,11 @@ provider "google" {
   region  = var.region
 }
 
+provider "google-beta" {
+  project = var.project
+  region  = var.region
+}
+
 provider "archive" {}
 
 locals {
@@ -18,7 +23,8 @@ resource "google_project_service" "enable_apis" {
     "cloudresourcemanager.googleapis.com",
     "cloudfunctions.googleapis.com",
     "storage-component.googleapis.com",
-    "iam.googleapis.com"
+    "iam.googleapis.com",
+    "secretmanager.googleapis.com"
   ])
 
   service            = each.key
@@ -63,7 +69,8 @@ resource "google_service_account" "sql_query_runner_sa" {
 resource "google_project_iam_member" "sql_query_runner_sa_roles" {
   for_each = toset([
     "roles/cloudsql.client",
-    "roles/pubsub.publisher"
+    "roles/pubsub.publisher",
+    "roles/secretmanager.secretAccessor"
   ])
   project = var.project
   role    = each.key
@@ -139,6 +146,64 @@ resource "google_cloudfunctions_function" "sql_export" {
   }
 }
 
+# Keep SQL connection details in secrets manager
+resource "google_secret_manager_secret" "sql_user" {
+  provider  = google-beta
+  secret_id = "sql_user"
+
+  labels = {
+    label = "cloud-sql"
+  }
+
+  replication {
+    automatic = true
+  }
+}
+
+resource "google_secret_manager_secret_version" "sql_user" {
+  provider    = google-beta
+  secret      = google_secret_manager_secret.sql_user.id
+  secret_data = var.sql_user
+}
+
+resource "google_secret_manager_secret" "sql_pass" {
+  provider  = google-beta
+  secret_id = "sql_pass"
+
+  labels = {
+    label = "cloud-sql"
+  }
+
+  replication {
+    automatic = true
+  }
+}
+
+resource "google_secret_manager_secret_version" "sql_pass" {
+  provider    = google-beta
+  secret      = google_secret_manager_secret.sql_pass.id
+  secret_data = var.sql_pass
+}
+
+resource "google_secret_manager_secret" "sql_connection_name" {
+  provider  = google-beta
+  secret_id = "sql_connection_name"
+
+  labels = {
+    label = "cloud-sql"
+  }
+
+  replication {
+    automatic = true
+  }
+}
+
+resource "google_secret_manager_secret_version" "sql_connection_name" {
+  provider    = google-beta
+  secret      = google_secret_manager_secret.sql_connection_name.id
+  secret_data = var.sql_connection_name
+}
+
 # Query Runner function zip file.
 data "archive_file" "query_runner_function_dist" {
   type        = "zip"
@@ -171,9 +236,6 @@ resource "google_cloudfunctions_function" "query_runner" {
   environment_variables = {
     TABLES_LIST_TOPIC_NAME = var.sql_tables_list_topic
     SQL_DB                 = var.sql_db_name
-    SQL_USER               = var.sql_user
-    SQL_PASS               = var.sql_pass
-    SQL_CONN_NAME          = var.sql_connection_name
     SQL_QUERY              = var.sql_table_select_query
   }
 }

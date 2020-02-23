@@ -7,6 +7,8 @@ from datetime import date
 import sqlalchemy
 from google.cloud import pubsub_v1
 
+from get_secret import get_secret
+
 
 def query_runner(event, context):
     """Triggered from a message on a Cloud Pub/Sub topic.
@@ -23,14 +25,19 @@ def query_runner(event, context):
             project_id, os.environ.get('TABLES_LIST_TOPIC_NAME', ''))
         database = os.environ.get('SQL_DB', '')
 
+        sql_user = get_secret(project_id, "sql_user")
+        sql_pass = get_secret(project_id, "sql_pass")
+
+        sql_connection_name = get_secret(project_id, "sql_connection_name")
+
         db = sqlalchemy.create_engine(
             sqlalchemy.engine.url.URL(
                 drivername="mysql+pymysql",
-                username=os.environ.get('SQL_USER', ''),
-                password=os.environ.get('SQL_PASS', ''),
+                username=sql_user,
+                password=sql_pass,
                 database=database,
                 query={
-                    "unix_socket": "/cloudsql/{}".format(os.environ.get('SQL_CONN_NAME', ''))},
+                    "unix_socket": "/cloudsql/{}".format(sql_connection_name)},
             ),
             pool_size=1,
             # Temporarily exceeds the set pool_size if no connections are available.
