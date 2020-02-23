@@ -9,16 +9,32 @@ variable "region" {
 }
 
 variable "sql_export_topic" {
-  description = "Pub/Sub topic the sql exporting function subscribes to."
+  description = "Pub/Sub topic to trigger the pipeline."
   default     = "sql-export"
+}
+
+variable "sql_tables_list_topic" {
+  description = "Pub/Sub topic with messages containing a list of tables to process."
+  default     = "sql-tables-list"
 }
 
 variable "functions_storage_bucket_name" {
   description = "Storage bucket to upload functions to."
 }
 
-variable "sql_exports_bucket_name" {
-  description = "Storage bucket where sql exports are uploaded."
+variable "export_function_execution_timeout" {
+  description = "Timeout setting for the export function."
+  default     = 540
+}
+
+variable "export_function_max_batches" {
+  description = "How many times the export function can re-run to process the remaining tables."
+  default     = 5
+}
+
+
+variable "csv_exports_bucket_name" {
+  description = "Storage bucket where csv exports are uploaded."
 }
 
 variable "sql_export_cron_schedule" {
@@ -48,4 +64,9 @@ variable "sql_pass" {
 
 variable "sql_connection_name" {
   description = "Cloud SQL connection name."
+}
+
+variable "sql_table_select_query" {
+  description = "SQL query to select table names."
+  default     = "SELECT table_name FROM information_schema.tables WHERE table_schema = 'default';"
 }
