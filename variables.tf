@@ -32,6 +32,9 @@ variable "export_function_max_batches" {
   default     = 5
 }
 
+variable "csv_exports_staging_bucket_name" {
+  description = "Storage bucket where raw csv files are being uploaded."
+}
 
 variable "csv_exports_bucket_name" {
   description = "Storage bucket where csv exports are uploaded."

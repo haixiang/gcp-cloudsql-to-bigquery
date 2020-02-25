@@ -1,3 +1,7 @@
+'''
+This Cloud function exports a given list of sql tables into Cloud Storage bucket.
+'''
+
 import base64
 import os
 import json
@@ -25,7 +29,7 @@ def sql_export(event, context):
     # Check if reached max number of batches.
     batch_no, max_batches = (int(event["attributes"]["batch_no"]),
                              int(event["attributes"]["max_batches"]))
-    print("Starting batch {} of {}. Tables to process: {}".format(
+    print("Starting batch {} of max {} allowed. Tables to process: {}".format(
         batch_no, max_batches, tables_str))
 
     if batch_no > max_batches:

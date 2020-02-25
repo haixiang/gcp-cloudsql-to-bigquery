@@ -1,3 +1,7 @@
+'''
+This Cloud function runs a query and publishes a list of tables to pubsub.
+'''
+
 import base64
 import os
 import json

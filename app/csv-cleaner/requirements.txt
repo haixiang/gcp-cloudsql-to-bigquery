@@ -1,0 +1,2 @@
+google-cloud-storage==1.26.0
+-e git://github.com/petedannemann/smart_open.git@f699a5f6cf9b92bcb3d885d73f180930212cb933#egg=smart_open

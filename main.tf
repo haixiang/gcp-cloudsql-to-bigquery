@@ -15,6 +15,8 @@ locals {
   export_function_name       = "cloud-sql-exporter"
   sql_query_runner_sa        = "cloud-sql-query-runner"
   query_runner_function_name = "cloud-sql-query-runner"
+  csv_cleaner_sa             = "csv-cleaner"
+  csv_cleaner_function_name  = "csv-cleaner"
 }
 
 # Enable APIs for the project.
@@ -75,6 +77,28 @@ resource "google_project_iam_member" "sql_query_runner_sa_roles" {
   project = var.project
   role    = each.key
   member  = "serviceAccount:${google_service_account.sql_query_runner_sa.email}"
+}
+
+resource "google_service_account" "csv_cleaner_sa" {
+  project      = var.project
+  account_id   = local.csv_cleaner_sa
+  display_name = "CSV Cleaner"
+  description  = "Service Account for the Cloud Function to read CSV files from one bucket, clean them up and export into another one."
+
+  # SA creation is eventually consistent, need to wait.
+  provisioner "local-exec" {
+    command = "sleep 30"
+  }
+}
+
+resource "google_project_iam_member" "csv_cleaner_sa_roles" {
+  for_each = toset([
+    "roles/cloudsql.viewer",
+    "roles/pubsub.publisher"
+  ])
+  project = var.project
+  role    = each.key
+  member  = "serviceAccount:${google_service_account.csv_cleaner_sa.email}"
 }
 
 # Topic with messages containing a list of tables to process.
@@ -139,7 +163,7 @@ resource "google_cloudfunctions_function" "sql_export" {
   environment_variables = {
     SQL_INSTANCE           = var.sql_instance_name
     SQL_DB                 = var.sql_db_name
-    BUCKET                 = google_storage_bucket.csv_exports.url
+    BUCKET                 = google_storage_bucket.csv_exports_staging.url
     MAX_EXEC_TIME          = var.export_function_execution_timeout - 60 # 1 min less than timeout
     MAX_BATCHES            = var.export_function_max_batches
     TABLES_LIST_TOPIC_NAME = var.sql_tables_list_topic
@@ -240,7 +264,78 @@ resource "google_cloudfunctions_function" "query_runner" {
   }
 }
 
-# Cloud Storage Bucket with csv exports.
+# Cloud Storage Bucket with raw csv exports.
+resource "google_storage_bucket" "csv_exports_staging" {
+  name               = var.csv_exports_staging_bucket_name
+  storage_class      = "MULTI_REGIONAL"
+  bucket_policy_only = true
+  # retention_policy {
+  #   retention_period = 2592000 # 30 days
+  # }
+  lifecycle_rule {
+    action {
+      type = "Delete"
+    }
+    condition {
+      age = 32 # days
+    }
+  }
+}
+
+resource "google_storage_bucket_iam_member" "export_staging_object_creator" {
+  bucket = google_storage_bucket.csv_exports_staging.name
+  role   = "roles/storage.objectCreator"
+  member = "serviceAccount:${var.sql_service_acc}"
+}
+
+resource "google_storage_bucket_iam_member" "export_staging_object_viewer" {
+  bucket = google_storage_bucket.csv_exports_staging.name
+  role   = "roles/storage.objectViewer"
+  member = "serviceAccount:${google_service_account.csv_cleaner_sa.email}"
+}
+
+resource "google_storage_bucket_iam_member" "export_staging_bucket_viewer" {
+  bucket = google_storage_bucket.csv_exports_staging.name
+  role   = "roles/storage.legacyBucketReader"
+  member = "serviceAccount:${google_service_account.csv_cleaner_sa.email}"
+}
+
+# CSV Cleaner function zip file.
+data "archive_file" "csv_cleaner_function_dist" {
+  type        = "zip"
+  source_dir  = "./app/${local.csv_cleaner_function_name}"
+  output_path = "dist/${local.csv_cleaner_function_name}.zip"
+}
+
+# Upload CSV Cleaner function into the bucket.
+resource "google_storage_bucket_object" "csv_cleaner_function_code" {
+  name   = "${local.csv_cleaner_function_name}.${data.archive_file.csv_cleaner_function_dist.output_md5}.zip"
+  bucket = google_storage_bucket.functions_storage.name
+  source = data.archive_file.csv_cleaner_function_dist.output_path
+}
+
+# Function to perform CSV cleanup.
+resource "google_cloudfunctions_function" "csv_cleaner" {
+  name                  = local.csv_cleaner_function_name
+  description           = "[Managed by Terraform] This function gets triggered by a file creation in the ${google_storage_bucket.csv_exports_staging.name} bucket."
+  available_memory_mb   = 1024
+  timeout               = 540
+  runtime               = "python37"
+  source_archive_bucket = google_storage_bucket_object.csv_cleaner_function_code.bucket
+  source_archive_object = google_storage_bucket_object.csv_cleaner_function_code.name
+  entry_point           = "csv_cleaner"
+  service_account_email = google_service_account.csv_cleaner_sa.email
+  region                = var.region
+  event_trigger {
+    event_type = "google.storage.object.finalize"
+    resource   = google_storage_bucket.csv_exports_staging.name
+  }
+  environment_variables = {
+    DEST_BUCKET = google_storage_bucket.csv_exports.name
+  }
+}
+
+# Cloud Storage Bucket with cleaned up csv exports.
 resource "google_storage_bucket" "csv_exports" {
   name               = var.csv_exports_bucket_name
   storage_class      = "MULTI_REGIONAL"
@@ -258,8 +353,14 @@ resource "google_storage_bucket" "csv_exports" {
   }
 }
 
-resource "google_storage_bucket_iam_member" "export_bucket_writer" {
+resource "google_storage_bucket_iam_member" "export_object_creator" {
   bucket = google_storage_bucket.csv_exports.name
   role   = "roles/storage.objectCreator"
-  member = "serviceAccount:${var.sql_service_acc}"
+  member = "serviceAccount:${google_service_account.csv_cleaner_sa.email}"
+}
+
+resource "google_storage_bucket_iam_member" "export_bucket_writer" {
+  bucket = google_storage_bucket.csv_exports.name
+  role   = "roles/storage.legacyBucketWriter"
+  member = "serviceAccount:${google_service_account.csv_cleaner_sa.email}"
 }
