@@ -318,7 +318,7 @@ resource "google_storage_bucket_object" "csv_cleaner_function_code" {
 resource "google_cloudfunctions_function" "csv_cleaner" {
   name                  = local.csv_cleaner_function_name
   description           = "[Managed by Terraform] This function gets triggered by a file creation in the ${google_storage_bucket.csv_exports_staging.name} bucket."
-  available_memory_mb   = 1024
+  available_memory_mb   = 128
   timeout               = 540
   runtime               = "python37"
   source_archive_bucket = google_storage_bucket_object.csv_cleaner_function_code.bucket
