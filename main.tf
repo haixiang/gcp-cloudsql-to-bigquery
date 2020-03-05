@@ -17,6 +17,8 @@ locals {
   query_runner_function_name = "cloud-sql-query-runner"
   csv_cleaner_sa             = "csv-cleaner"
   csv_cleaner_function_name  = "csv-cleaner"
+  bq_importer_sa             = "bq-importer"
+  bq_importer_function_name  = "bq-importer"
 }
 
 # Enable APIs for the project.
@@ -32,6 +34,28 @@ resource "google_project_service" "enable_apis" {
   service            = each.key
   project            = var.project
   disable_on_destroy = false
+}
+
+resource "google_service_account" "bq_importer_sa" {
+  project      = var.project
+  account_id   = local.bq_importer_sa
+  display_name = "BigQuery importer"
+  description  = "Service Account for the Cloud Function to perform BigQuery imports."
+
+  # SA creation is eventually consistent, need to wait.
+  provisioner "local-exec" {
+    command = "sleep 30"
+  }
+}
+
+resource "google_project_iam_member" "bq_importer_sa_roles" {
+  for_each = toset([
+    "roles/bigquery.dataEditor",
+    "roles/bigquery.user"
+  ])
+  project = var.project
+  role    = each.key
+  member  = "serviceAccount:${google_service_account.bq_importer_sa.email}"
 }
 
 resource "google_service_account" "sql_exporter_sa" {
@@ -363,4 +387,51 @@ resource "google_storage_bucket_iam_member" "export_bucket_writer" {
   bucket = google_storage_bucket.csv_exports.name
   role   = "roles/storage.legacyBucketWriter"
   member = "serviceAccount:${google_service_account.csv_cleaner_sa.email}"
+}
+
+# BQ Importer function zip file.
+data "archive_file" "bq_importer_function_dist" {
+  type        = "zip"
+  source_dir  = "./app/${local.bq_importer_function_name}"
+  output_path = "dist/${local.bq_importer_function_name}.zip"
+}
+
+# Upload BQ Importer function into the bucket.
+resource "google_storage_bucket_object" "bq_importer_function_code" {
+  name   = "${local.bq_importer_function_name}.${data.archive_file.bq_importer_function_dist.output_md5}.zip"
+  bucket = google_storage_bucket.functions_storage.name
+  source = data.archive_file.bq_importer_function_dist.output_path
+}
+
+# Function to perform BQ Import.
+resource "google_cloudfunctions_function" "bq_importer" {
+  name                  = local.bq_importer_function_name
+  description           = "[Managed by Terraform] This function gets triggered by a file creation in the ${google_storage_bucket.csv_exports.name} bucket."
+  available_memory_mb   = 128
+  timeout               = 540
+  runtime               = "python37"
+  source_archive_bucket = google_storage_bucket_object.bq_importer_function_code.bucket
+  source_archive_object = google_storage_bucket_object.bq_importer_function_code.name
+  entry_point           = "bq_importer"
+  service_account_email = google_service_account.bq_importer_sa.email
+  region                = var.region
+  event_trigger {
+    event_type = "google.storage.object.finalize"
+    resource   = google_storage_bucket.csv_exports.name
+  }
+  environment_variables = {
+    BQ_DATASET = var.bq_dataset
+  }
+}
+
+resource "google_storage_bucket_iam_member" "export_object_viewer" {
+  bucket = google_storage_bucket.csv_exports.name
+  role   = "roles/storage.objectViewer"
+  member = "serviceAccount:${google_service_account.bq_importer_sa.email}"
+}
+
+resource "google_storage_bucket_iam_member" "export_bucket_viewer" {
+  bucket = google_storage_bucket.csv_exports.name
+  role   = "roles/storage.legacyBucketReader"
+  member = "serviceAccount:${google_service_account.bq_importer_sa.email}"
 }

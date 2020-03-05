@@ -1,3 +1,7 @@
+'''
+Gets a secret from Secret Manager.
+'''
+
 from google.cloud import secretmanager_v1beta1 as secretmanager
 
 

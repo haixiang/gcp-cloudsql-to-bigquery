@@ -6,11 +6,12 @@ import base64
 import os
 import json
 import time
-import random
 from datetime import date
 import google.auth
 from googleapiclient import discovery
 from google.cloud import pubsub_v1
+
+from export_table import export_table
 
 
 def sql_export(event, context):
@@ -46,34 +47,26 @@ def sql_export(event, context):
     while export_tables:
         table = export_tables.pop()
         try:
-            body = {  # Database instance export request.
-                "exportContext": {  # Database instance export context. # Contains details about the export operation.
-                    # This is always sql#exportContext.
-                    "kind": "sql#exportContext",
-                    "fileType": "CSV",
-                    # The path to the file in Google Cloud Storage where the export will be stored. The URI is in the form gs://bucketName/fileName. If the file already exists, the requests succeeds, but the operation fails. If fileType is SQL and the filename ends with .gz, the contents are compressed.
-                    "uri": "{bucket}/exports/{date}/{table}.csv".format(bucket=bucket, date=date.today(), table=table),
-                    "csvExportOptions": {  # Options for exporting data as CSV.
-                        # The select query used to extract the data.
-                        "selectQuery": "SELECT * FROM `{}`;".format(table),
-                    },
-                    "databases": [  # Databases to be exported.
-                        database
-                    ]
-                },
-            }
-            req = service.instances().export(project=project_id, instance=instance, body=body)
-            resp = req.execute()
-            service_request = service.operations().get(
-                project=project_id, operation=resp["name"])
+            print("Starting the export of `{}` table.".format(table))
+            # Export table schema.
+            query = ("SELECT COLUMN_NAME,DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS "
+                     "WHERE TABLE_SCHEMA = '{}' AND TABLE_NAME = '{}' "
+                     "ORDER BY ORDINAL_POSITION;").format(database, table)
 
-            # Exponential backoff and retry.
-            for n in range(8):
-                time.sleep((2 ** n) + (random.randint(0, 1000) / 1000))
-                response = service_request.execute()
+            export_path = "{bucket}/schemas/{date}/{table}.schema".format(
+                bucket=bucket, date=date.today(), table=table)
+            export_table(table, query, export_path=export_path, service=service, database=database,
+                         project_id=project_id, instance=instance)
 
-                if response['status'] == "DONE":
-                    break
+            print("Schema for `{}` has been exported successfully.".format(table))
+
+            # Export table data.
+            query = "SELECT * FROM `{}`;".format(table)
+
+            export_path = "{bucket}/exports/{date}/{table}.csv".format(
+                bucket=bucket, date=date.today(), table=table)
+            export_table(table, query, export_path=export_path, service=service, database=database,
+                         project_id=project_id, instance=instance)
 
             print("Table `{}` exported successfully.".format(table))
 

@@ -29,7 +29,7 @@ variable "export_function_execution_timeout" {
 
 variable "export_function_max_batches" {
   description = "How many times the export function can re-run to process the remaining tables."
-  default     = 5
+  default     = 8
 }
 
 variable "csv_exports_staging_bucket_name" {
@@ -72,4 +72,8 @@ variable "sql_connection_name" {
 variable "sql_table_select_query" {
   description = "SQL query to select table names."
   default     = "SELECT table_name FROM information_schema.tables WHERE table_schema = 'default';"
+}
+
+variable "bq_dataset" {
+  description = "Bigquery dataset to export to."
 }
