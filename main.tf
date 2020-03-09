@@ -11,14 +11,10 @@ provider "google-beta" {
 provider "archive" {}
 
 locals {
-  sql_exporter_sa            = "cloud-sql-exporter"
-  export_function_name       = "cloud-sql-exporter"
-  sql_query_runner_sa        = "cloud-sql-query-runner"
-  query_runner_function_name = "cloud-sql-query-runner"
-  csv_cleaner_sa             = "csv-cleaner"
-  csv_cleaner_function_name  = "csv-cleaner"
-  bq_importer_sa             = "bq-importer"
-  bq_importer_function_name  = "bq-importer"
+  sql_exporter     = "cloud-sql-exporter"
+  sql_query_runner = "cloud-sql-query-runner"
+  csv_cleaner      = "csv-cleaner"
+  bq_importer      = "bq-importer"
 }
 
 # Enable APIs for the project.
@@ -36,9 +32,9 @@ resource "google_project_service" "enable_apis" {
   disable_on_destroy = false
 }
 
-resource "google_service_account" "bq_importer_sa" {
+resource "google_service_account" "bq_importer" {
   project      = var.project
-  account_id   = local.bq_importer_sa
+  account_id   = local.bq_importer
   display_name = "BigQuery importer"
   description  = "Service Account for the Cloud Function to perform BigQuery imports."
 
@@ -48,19 +44,19 @@ resource "google_service_account" "bq_importer_sa" {
   }
 }
 
-resource "google_project_iam_member" "bq_importer_sa_roles" {
+resource "google_project_iam_member" "bq_importer_roles" {
   for_each = toset([
     "roles/bigquery.dataEditor",
     "roles/bigquery.user"
   ])
   project = var.project
   role    = each.key
-  member  = "serviceAccount:${google_service_account.bq_importer_sa.email}"
+  member  = "serviceAccount:${google_service_account.bq_importer.email}"
 }
 
-resource "google_service_account" "sql_exporter_sa" {
+resource "google_service_account" "sql_exporter" {
   project      = var.project
-  account_id   = local.sql_exporter_sa
+  account_id   = local.sql_exporter
   display_name = "Cloud SQL Exporter"
   description  = "Service Account for the Cloud Function to perform Cloud SQL exports."
 
@@ -70,19 +66,19 @@ resource "google_service_account" "sql_exporter_sa" {
   }
 }
 
-resource "google_project_iam_member" "sql_exporter_sa_roles" {
+resource "google_project_iam_member" "sql_exporter_roles" {
   for_each = toset([
     "roles/cloudsql.viewer",
     "roles/pubsub.publisher"
   ])
   project = var.project
   role    = each.key
-  member  = "serviceAccount:${google_service_account.sql_exporter_sa.email}"
+  member  = "serviceAccount:${google_service_account.sql_exporter.email}"
 }
 
-resource "google_service_account" "sql_query_runner_sa" {
+resource "google_service_account" "sql_query_runner" {
   project      = var.project
-  account_id   = local.sql_query_runner_sa
+  account_id   = local.sql_query_runner
   display_name = "Cloud SQL Query Runner"
   description  = "Service Account for the Cloud Function to run queries against Cloud SQL."
 
@@ -92,7 +88,7 @@ resource "google_service_account" "sql_query_runner_sa" {
   }
 }
 
-resource "google_project_iam_member" "sql_query_runner_sa_roles" {
+resource "google_project_iam_member" "sql_query_runner_roles" {
   for_each = toset([
     "roles/cloudsql.client",
     "roles/pubsub.publisher",
@@ -100,12 +96,12 @@ resource "google_project_iam_member" "sql_query_runner_sa_roles" {
   ])
   project = var.project
   role    = each.key
-  member  = "serviceAccount:${google_service_account.sql_query_runner_sa.email}"
+  member  = "serviceAccount:${google_service_account.sql_query_runner.email}"
 }
 
-resource "google_service_account" "csv_cleaner_sa" {
+resource "google_service_account" "csv_cleaner" {
   project      = var.project
-  account_id   = local.csv_cleaner_sa
+  account_id   = local.csv_cleaner
   display_name = "CSV Cleaner"
   description  = "Service Account for the Cloud Function to read CSV files from one bucket, clean them up and export into another one."
 
@@ -115,14 +111,14 @@ resource "google_service_account" "csv_cleaner_sa" {
   }
 }
 
-resource "google_project_iam_member" "csv_cleaner_sa_roles" {
+resource "google_project_iam_member" "csv_cleaner_roles" {
   for_each = toset([
     "roles/cloudsql.viewer",
     "roles/pubsub.publisher"
   ])
   project = var.project
   role    = each.key
-  member  = "serviceAccount:${google_service_account.csv_cleaner_sa.email}"
+  member  = "serviceAccount:${google_service_account.csv_cleaner.email}"
 }
 
 # Topic with messages containing a list of tables to process.
@@ -157,20 +153,20 @@ resource "google_storage_bucket" "functions_storage" {
 # SQL Export function zip file.
 data "archive_file" "sql_export_function_dist" {
   type        = "zip"
-  source_dir  = "./app/${local.export_function_name}"
-  output_path = "dist/${local.export_function_name}.zip"
+  source_dir  = "./app/${local.sql_exporter}"
+  output_path = "dist/${local.sql_exporter}.zip"
 }
 
 # Upload SQL Export function into the bucket.
 resource "google_storage_bucket_object" "sql_export_function_code" {
-  name   = "${local.export_function_name}.${data.archive_file.sql_export_function_dist.output_md5}.zip"
+  name   = "${local.sql_exporter}.${data.archive_file.sql_export_function_dist.output_md5}.zip"
   bucket = google_storage_bucket.functions_storage.name
   source = data.archive_file.sql_export_function_dist.output_path
 }
 
 # Function to perform Cloud SQL export.
 resource "google_cloudfunctions_function" "sql_export" {
-  name                  = local.export_function_name
+  name                  = local.sql_exporter
   description           = "[Managed by Terraform] This function gets triggered by new messages in the ${google_pubsub_topic.table_list.name} pubsub topic"
   available_memory_mb   = 128
   runtime               = "python37"
@@ -178,7 +174,7 @@ resource "google_cloudfunctions_function" "sql_export" {
   source_archive_bucket = google_storage_bucket_object.sql_export_function_code.bucket
   source_archive_object = google_storage_bucket_object.sql_export_function_code.name
   entry_point           = "sql_export"
-  service_account_email = google_service_account.sql_exporter_sa.email
+  service_account_email = google_service_account.sql_exporter.email
   region                = var.region
   event_trigger {
     event_type = "google.pubsub.topic.publish"
@@ -255,27 +251,27 @@ resource "google_secret_manager_secret_version" "sql_connection_name" {
 # Query Runner function zip file.
 data "archive_file" "query_runner_function_dist" {
   type        = "zip"
-  source_dir  = "./app/${local.query_runner_function_name}"
-  output_path = "dist/${local.query_runner_function_name}.zip"
+  source_dir  = "./app/${local.sql_query_runner}"
+  output_path = "dist/${local.sql_query_runner}.zip"
 }
 
 # Upload Query Runner function into the bucket.
 resource "google_storage_bucket_object" "query_runner_function_code" {
-  name   = "${local.query_runner_function_name}.${data.archive_file.query_runner_function_dist.output_md5}.zip"
+  name   = "${local.sql_query_runner}.${data.archive_file.query_runner_function_dist.output_md5}.zip"
   bucket = google_storage_bucket.functions_storage.name
   source = data.archive_file.query_runner_function_dist.output_path
 }
 
 # Function to perform Cloud SQL queries.
 resource "google_cloudfunctions_function" "query_runner" {
-  name                  = local.query_runner_function_name
+  name                  = local.sql_query_runner
   description           = "[Managed by Terraform] This function gets triggered by new messages in the ${google_pubsub_topic.sql_export.name} pubsub topic"
   available_memory_mb   = 128
   runtime               = "python37"
   source_archive_bucket = google_storage_bucket_object.query_runner_function_code.bucket
   source_archive_object = google_storage_bucket_object.query_runner_function_code.name
   entry_point           = "query_runner"
-  service_account_email = google_service_account.sql_query_runner_sa.email
+  service_account_email = google_service_account.sql_query_runner.email
   region                = var.region
   event_trigger {
     event_type = "google.pubsub.topic.publish"
@@ -315,32 +311,32 @@ resource "google_storage_bucket_iam_member" "export_staging_object_creator" {
 resource "google_storage_bucket_iam_member" "export_staging_object_viewer" {
   bucket = google_storage_bucket.csv_exports_staging.name
   role   = "roles/storage.objectViewer"
-  member = "serviceAccount:${google_service_account.csv_cleaner_sa.email}"
+  member = "serviceAccount:${google_service_account.csv_cleaner.email}"
 }
 
 resource "google_storage_bucket_iam_member" "export_staging_bucket_viewer" {
   bucket = google_storage_bucket.csv_exports_staging.name
   role   = "roles/storage.legacyBucketReader"
-  member = "serviceAccount:${google_service_account.csv_cleaner_sa.email}"
+  member = "serviceAccount:${google_service_account.csv_cleaner.email}"
 }
 
 # CSV Cleaner function zip file.
 data "archive_file" "csv_cleaner_function_dist" {
   type        = "zip"
-  source_dir  = "./app/${local.csv_cleaner_function_name}"
-  output_path = "dist/${local.csv_cleaner_function_name}.zip"
+  source_dir  = "./app/${local.csv_cleaner}"
+  output_path = "dist/${local.csv_cleaner}.zip"
 }
 
 # Upload CSV Cleaner function into the bucket.
 resource "google_storage_bucket_object" "csv_cleaner_function_code" {
-  name   = "${local.csv_cleaner_function_name}.${data.archive_file.csv_cleaner_function_dist.output_md5}.zip"
+  name   = "${local.csv_cleaner}.${data.archive_file.csv_cleaner_function_dist.output_md5}.zip"
   bucket = google_storage_bucket.functions_storage.name
   source = data.archive_file.csv_cleaner_function_dist.output_path
 }
 
 # Function to perform CSV cleanup.
 resource "google_cloudfunctions_function" "csv_cleaner" {
-  name                  = local.csv_cleaner_function_name
+  name                  = local.csv_cleaner
   description           = "[Managed by Terraform] This function gets triggered by a file creation in the ${google_storage_bucket.csv_exports_staging.name} bucket."
   available_memory_mb   = 128
   timeout               = 540
@@ -348,7 +344,7 @@ resource "google_cloudfunctions_function" "csv_cleaner" {
   source_archive_bucket = google_storage_bucket_object.csv_cleaner_function_code.bucket
   source_archive_object = google_storage_bucket_object.csv_cleaner_function_code.name
   entry_point           = "csv_cleaner"
-  service_account_email = google_service_account.csv_cleaner_sa.email
+  service_account_email = google_service_account.csv_cleaner.email
   region                = var.region
   event_trigger {
     event_type = "google.storage.object.finalize"
@@ -380,32 +376,32 @@ resource "google_storage_bucket" "csv_exports" {
 resource "google_storage_bucket_iam_member" "export_object_creator" {
   bucket = google_storage_bucket.csv_exports.name
   role   = "roles/storage.objectCreator"
-  member = "serviceAccount:${google_service_account.csv_cleaner_sa.email}"
+  member = "serviceAccount:${google_service_account.csv_cleaner.email}"
 }
 
 resource "google_storage_bucket_iam_member" "export_bucket_writer" {
   bucket = google_storage_bucket.csv_exports.name
   role   = "roles/storage.legacyBucketWriter"
-  member = "serviceAccount:${google_service_account.csv_cleaner_sa.email}"
+  member = "serviceAccount:${google_service_account.csv_cleaner.email}"
 }
 
 # BQ Importer function zip file.
 data "archive_file" "bq_importer_function_dist" {
   type        = "zip"
-  source_dir  = "./app/${local.bq_importer_function_name}"
-  output_path = "dist/${local.bq_importer_function_name}.zip"
+  source_dir  = "./app/${local.bq_importer}"
+  output_path = "dist/${local.bq_importer}.zip"
 }
 
 # Upload BQ Importer function into the bucket.
 resource "google_storage_bucket_object" "bq_importer_function_code" {
-  name   = "${local.bq_importer_function_name}.${data.archive_file.bq_importer_function_dist.output_md5}.zip"
+  name   = "${local.bq_importer}.${data.archive_file.bq_importer_function_dist.output_md5}.zip"
   bucket = google_storage_bucket.functions_storage.name
   source = data.archive_file.bq_importer_function_dist.output_path
 }
 
 # Function to perform BQ Import.
 resource "google_cloudfunctions_function" "bq_importer" {
-  name                  = local.bq_importer_function_name
+  name                  = local.bq_importer
   description           = "[Managed by Terraform] This function gets triggered by a file creation in the ${google_storage_bucket.csv_exports.name} bucket."
   available_memory_mb   = 128
   timeout               = 540
@@ -413,7 +409,7 @@ resource "google_cloudfunctions_function" "bq_importer" {
   source_archive_bucket = google_storage_bucket_object.bq_importer_function_code.bucket
   source_archive_object = google_storage_bucket_object.bq_importer_function_code.name
   entry_point           = "bq_importer"
-  service_account_email = google_service_account.bq_importer_sa.email
+  service_account_email = google_service_account.bq_importer.email
   region                = var.region
   event_trigger {
     event_type = "google.storage.object.finalize"
@@ -427,11 +423,11 @@ resource "google_cloudfunctions_function" "bq_importer" {
 resource "google_storage_bucket_iam_member" "export_object_viewer" {
   bucket = google_storage_bucket.csv_exports.name
   role   = "roles/storage.objectViewer"
-  member = "serviceAccount:${google_service_account.bq_importer_sa.email}"
+  member = "serviceAccount:${google_service_account.bq_importer.email}"
 }
 
 resource "google_storage_bucket_iam_member" "export_bucket_viewer" {
   bucket = google_storage_bucket.csv_exports.name
   role   = "roles/storage.legacyBucketReader"
-  member = "serviceAccount:${google_service_account.bq_importer_sa.email}"
+  member = "serviceAccount:${google_service_account.bq_importer.email}"
 }
