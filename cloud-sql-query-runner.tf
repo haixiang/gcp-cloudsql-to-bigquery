@@ -58,5 +58,6 @@ resource "google_cloudfunctions_function" "query_runner" {
     TABLES_LIST_TOPIC_NAME = var.sql_tables_list_topic
     SQL_DB                 = var.sql_db_name
     SQL_QUERY              = var.sql_table_select_query
+    MAX_BATCHES            = var.export_function_max_batches
   }
 }
