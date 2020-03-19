@@ -9,6 +9,7 @@ import time
 from datetime import date
 import google.auth
 from googleapiclient import discovery
+from googleapiclient.errors import HttpError
 from google.cloud import pubsub_v1
 
 from export_table import export_table
@@ -82,6 +83,12 @@ def sql_export(event, context):
                 future = publisher.publish(topic_path, data,
                                            batch_no=str(batch_no), max_batches=str(max_batches))
                 print(future.result())
+                break
+        # Handle more than once event delivery.
+        except HttpError as e:
+            if e.resp.status == 409:  # Stop the function execution.
+                print("Stopping export for table `{}`, as another instance is currently running. Batch {} of {}.".format(
+                    table, batch_no, max_batches))
                 break
 
         except Exception as e:
